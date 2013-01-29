@@ -32,6 +32,22 @@ do
 	end
 end
 
+function checkColor(color1, color2)
+	return (color1[1] == color2[1] and color1[2] == color2[2] and color1[3] == color2[3])
+end
+
+-- Modifier symbol drawing functions
+
+function drawTriangle(centerx, centery, angle, pointlen)
+	local x1 = centerx + pointlen * math.cos(angle)
+	local y1 = centery - pointlen * -math.sin(angle)
+	local x2 = centerx + pointlen/2 * math.cos(angle+math.rad(120))
+	local y2 = centery - pointlen/2 * -math.sin(angle+math.rad(120))
+	local x3 = centerx + pointlen/2 * math.cos(angle+math.rad(240))
+	local y3 = centery - pointlen/2 * -math.sin(angle+math.rad(240))
+	love.graphics.triangle('fill', x1, y1, x2, y2, x3, y3)
+end
+
 -- Containment checking: point - circle
 
 function bound_point_circle(px,py,cx,cy,cr)
@@ -74,7 +90,7 @@ local Sink = {
 		for i,v in ipairs(self.array) do
 			if bound_point_circle(particle.x,particle.y,v.x,v.y,v.r) then
 				-- if particle is the correct color, then add to the accumulator
-				if particle.c[1] == v.c[1] and particle.c[2] == v.c[2] and particle.c[3] == v.c[3] then
+				if checkColor(particle.c, v.c) then
 					v.p = math.min(v.p + v.s, v.e*v.s)
 					return true
 				end
@@ -106,13 +122,11 @@ local Sink = {
 			love.graphics.setColor(v.c[1],v.c[2],v.c[3],255)
 			love.graphics.circle('line', v.x, v.y, v.r, v.r * 5)
 			local vol = v.song:getVolume()
-			-- two "non-opaque" methods to draw a "line" corresponding to non-integer volume
+			-- two "non-opaque" methods to draw a partially visible line corresponding to smaller volume changes
 			love.graphics.setColor(v.c[1],v.c[2],v.c[3],255/(vol*(v.r*2*0.75)%1))
-			-- top
-			love.graphics.rectangle('fill',v.x-v.r*0.25,v.y-v.r*0.75*vol,v.r*0.5,1)
-			-- bottom
-			love.graphics.rectangle('fill',v.x-v.r*0.25,(v.y+v.r*0.75*vol)-(1),v.r*0.5,1)
-			-- two opaque methods to draw the integer fill and the outline
+			love.graphics.rectangle('fill',v.x-v.r*0.25,v.y-v.r*0.75*vol,v.r*0.5,1) -- top
+			love.graphics.rectangle('fill',v.x-v.r*0.25,(v.y+v.r*0.75*vol)-(1),v.r*0.5,1) -- bottom
+			-- two opaque methods to draw the normal line fill and the outline
 			love.graphics.setColor(v.c[1],v.c[2],v.c[3],255)
 			love.graphics.rectangle('fill',v.x-v.r*0.25,v.y-(v.r-1)*0.75*vol,v.r*0.5,(v.r-1)*1.5*vol)
 			love.graphics.rectangle('line',v.x-v.r*0.25,v.y-v.r*0.75,v.r*0.5,v.r*1.5)
@@ -144,6 +158,7 @@ local Particle = {
 			c = Color,
 			live = true,
 			sinked = false,
+			temp_r = 0,
 		}
 	end,
 	update = function(self,dt)
@@ -151,10 +166,9 @@ local Particle = {
 			if v.live then
 				-- apply relevant modifications
 				if not v.sinked then v.sinked = Sink:event(v) end
-
 				-- compute movement
 				v.x = v.x + v.r * math.cos(v.phi) * (dt/(1/75))
-				v.y = v.y + v.r * math.sin(v.phi) * (dt/(1/75))
+				v.y = v.y - v.r * math.sin(v.phi) * (dt/(1/75))
 				v.r = v.r + v.r * v.a * dt
 				if (v.r <= 0.1) then v.live = false end
 			end
@@ -170,6 +184,58 @@ local Particle = {
 			end
 		end
 	end,
+}
+
+-- Redirector definition
+
+local Redirector = {
+	array = {},
+	new = function(self,X,Y,Angle,Radius,Acceleration)
+		self.array[#self.array+1] = {
+			x = X,
+			y = Y,
+			phi = Angle,
+			r = Radius,
+			a = Acceleration,
+			setLMB = function(self,X,Y) self.x = X self.y = Y print("redirector position = " .. self.x .. ", " .. self.y) end,
+			setLMBS = function(self,X,Y) self.phi = math.atan2(Y-self.y,X-self.x) print("redirector angle = " .. self.phi) end,
+			setLMBC = function(self,X,Y) self.r = math.sqrt((self.x-X)^2+(self.y-Y)^2) print("redirector radius = " .. self.r) end,
+		}
+	end,
+	update = function(self,dt)
+		for j, w in ipairs(self.array) do
+			for i,v in ipairs(Particle.array) do
+				if v.live --[[and checkolor(w.c,v.c)--]] then
+					if bound_point_circle(v.x, v.y, w.x, w.y, w.r) then
+						v.tempr = v.r
+						v.r = ((v.r * math.cos(v.phi) + w.a * (1 - (((v.x - w.x)^2+(v.y - w.y)^2)^(1/2))/w.r) * 75 * dt * math.cos(w.phi))^2 + (v.r * math.sin(v.phi) + w.a *(1 - (((v.x - w.x)^2+(v.y - w.y)^2)^(1/2))/w.r) * 75 *dt * math.sin(w.phi))^2 )^(0.5)
+						v.phi = math.atan2((v.tempr * math.sin(v.phi) + w.a * dt * 75 * -math.sin(w.phi)),(v.tempr * math.cos(v.phi) + w.a * 75 * dt * math.cos(w.phi)))
+						--v.tempr = 0
+					end
+				end
+			end
+		end
+	end,
+	draw = function(self,dt)
+		for i,v in ipairs(self.array) do
+			saveColor()
+			love.graphics.setColor(255,255,255,127)
+			-- Draw influence circle
+			love.graphics.circle('line', v.x, v.y, v.r, v.r * 5)
+			-- Draw directional triangle
+			drawTriangle(v.x, v.y, v.phi, v.r)
+			restoreColor()
+		end
+	end,
+	capture = function(self,X,Y)
+		for i,v in ipairs(self.array) do
+			--print "capture: Emitter"
+			if bound_point_circle(X,Y,v.x,v.y,v.r) then
+				return v
+			end
+		end
+		return false
+	end
 }
 
 -- Emitter definition
@@ -188,9 +254,8 @@ local Emitter = {
 			d = Density,
 			m = Mode,
 			c = Color,
-			ctr = 0,
 			setLMB = function(self,X,Y) self.x = X self.y = Y print("emitter position = " .. self.x .. ", " .. self.y) end,
-			setLMBS = function(self,X,Y) self.phi = math.atan2(Y-self.y,X-self.x) print("emitter angle = " .. self.phi) end,
+			setLMBS = function(self,X,Y) self.phi = math.atan2(-(Y-self.y),X-self.x) print("emitter angle = " .. self.phi) end,
 			setLMBC = function(self,X,Y) self.d = 0.5-1/math.sqrt((self.x-X)^2+(self.y-Y)^2) print("emitter density = " .. self.d) end,
 		}
 	end,
@@ -230,7 +295,7 @@ local Emitter = {
 -- Object Capturing for mouse cursor
 
 function Capture(x,y)
-	return (Emitter:capture(x,y) or Sink:capture(x,y))
+	return (Emitter:capture(x,y) or Sink:capture(x,y) or Redirector:capture(x,y))
 end
 
 -- Main things
@@ -254,13 +319,15 @@ function love.load()
 	local width = love.graphics.getWidth()
 	local height = love.graphics.getHeight()
 
+	Redirector:new(2*width/3,height/2,math.rad(120),25,0.01)
+
 	Emitter:new(width/2,height/6,2*math.pi/2,1,-0.5,{127,127,255,255},1/32,1/16,1/5,'rand')
 	Emitter:new(width/2,height/4,2*math.pi/2,1,-0.5,{255,127,127,255},1/32,1/16,1/5,'rand')
 	Emitter:new(width/2,height/3,2*math.pi/2,1,-0.5,{127,255,127,255},1/32,1/16,1/5,'rand')
 
 	Sink:new(width/3,height/6,25,{127,127,255,255},0.75,5.0,0.5,3.0,'audio/piano_high.mp3')
-	Sink:new(width/3,height/4,25,{255,127,127,255},0.75,5.0,0.5,3.0,'audio/piano_medium.mp3')
-	Sink:new(width/3,height/3,25,{127,255,127,255},0.75,5.0,0.5,3.0,'audio/piano_low.mp3')
+	Sink:new(width/3,height/4,25,{255,127,127,255},0.75,5.0,0.5,3.0,'audio/piano_low.mp3')
+	Sink:new(width/3,height/3,25,{127,255,127,255},0.75,5.0,0.5,3.0,'audio/piano_medium.mp3')
 
 	Sink:init()
 
@@ -291,6 +358,7 @@ function love.update(dt)
 
 	-- Element updates
 
+	Redirector:update(dt)
 	Emitter:update(dt,counter)
 	Sink:update(dt)
 
@@ -305,6 +373,7 @@ function love.draw()
 
 	love.graphics.push()
 
+	Redirector:draw()
 	Emitter:draw()
 	Sink:draw()
 
@@ -346,7 +415,7 @@ function love.mousereleased(X,Y,Button)
 end
 
 function love.keypressed(Key,Unicode)
-	Emitter.array = {}
+	if key == 'space' then Emitter.array = {} end
 end
 
 function love.keyreleased(Key,Unicode)
