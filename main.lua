@@ -56,6 +56,168 @@ function bound_point_circle(px,py,cx,cy,cr)
 	return (dx^2 + dy^2) < cr^2
 end
 
+--[[	this would be slower than just inlining that one short bit of code
+
+function angle_source_target(sx,sy,tx,ty)
+	return math.atan2(ty-sy,tx-sx)
+end
+
+function radius_source_target(sx,sy,tx,ty)
+	return math.sqrt((ty-sy)^2+(tx-sx)^2)
+end
+
+--]]
+
+-- Blackhole definition
+
+local Blackhole = {
+	array = {},
+	new = function(self,X,Y,Magnitude)
+		self.array[#self.array+1] = {
+			x = X,
+			y = Y,
+			r = Magnitude,
+			offset = 0,
+			setLMB  = function(self,X,Y) self.x = X self.y = Y print("black hole position = " .. self.x .. ", " .. self.y) end,
+			setLMBS = function(self,X,Y) self.r = math.sqrt((self.x-X)^2+(self.y-Y)^2) print("black hole radius = " .. self.r) end,
+			setLMBC = function(self,X,Y) end,
+		}
+	end,
+	event = function(self,particle)
+		for i,v in ipairs(self.array) do
+			if bound_point_circle(particle.x,particle.y,v.x,v.y,v.r) then
+				if particle.x == v.x and particle.y == v.y then
+					particle.live = false
+				else
+					---- "path of the saints"
+					--local gdragangle = math.atan2(v.y-particle.y,v.x-particle.x)
+					--local gdragforce = math.sqrt((v.y-particle.y)^2+(v.x-particle.x)^2)
+					--local x1 = particle.r * math.cos(gdragangle)
+					--local y1 = particle.r * -math.sin(gdragangle)
+					--local x2 = particle.r * math.cos(particle.phi)
+					--local y2 = particle.r * -math.sin(particle.phi)
+					--particle.phi = math.atan2(y1+y2,x1+x2)
+					--particle.r = particle.r + math.sqrt((y1+y2)^2+(x1+x2)^2)*0.001
+
+					-- calculate vector from particle to blackhole center
+					local gdragangle = math.atan2(v.y-particle.y,v.x-particle.x)
+					local gdragforce = math.sqrt((v.y-particle.y)^2+(v.x-particle.x)^2)
+					-- calculate intermediary coordinates based on above equations
+					-- we need the force to be a fraction of the current force
+					local x1 = (gdragforce/v.r) * math.cos(gdragangle)
+					local y1 = (gdragforce/v.r) * -math.sin(gdragangle)
+					-- calculate intermediary coordinates based on particle vector
+					local x2 = particle.r * math.cos(particle.phi)
+					local y2 = particle.r * -math.sin(particle.phi)
+					-- set particle vector to new heading and speed
+					particle.phi = math.atan2(y1+y2,x1+x2)
+					particle.r = particle.r + math.sqrt((y1+y2)^2+(x1+x2)^2)*0.001
+				end
+			end
+		end
+	end,
+	update = function(self,dt)
+		for i,v in ipairs(self.array) do
+			v.offset = v.offset + ((v.r/2)/2) * dt
+			if v.offset > v.r/2 then v.offset = 0 end
+		end
+	end,
+	draw = function(self)
+		for i,v in ipairs(self.array) do
+			for j=1,v.r,1 do
+				saveColor()
+				--local alpha = math.sin((((v.offset+j)-1)*(math.pi/(v.r/2)))-(math.pi/2))*255
+				local alpha = ((((v.r/2) - (v.offset+j))-1)/(v.r/2))*255
+				love.graphics.setColor(0,0,0,alpha)
+				love.graphics.circle('line',v.x,v.y,j)
+				restoreColor()
+			end
+		end
+	end,
+	capture = function(self,X,Y)
+		for i,v in ipairs(self.array) do
+			--print "capture: Nebula"
+			if bound_point_circle(X,Y,v.x,v.y,v.r) then
+				return v
+			end
+		end
+		return false
+	end
+}
+
+-- Nebula definition
+
+local Nebula = {
+	array = {},
+	new = function(self,X,Y,Magnitude,Color)
+		local cc = Color
+		cc[4] = 255
+		self.array[#self.array+1] = {
+			x = X,
+			y = Y,
+			r = Magnitude,
+			c = cc,
+			alpha = false,
+			func = 'add',
+			setLMB = function(self,X,Y) self.x = X self.y = Y print("nebula position = " .. self.x .. ", " .. self.y) end,
+			setLMBS = function(self,X,Y) self.r = math.sqrt((self.x-X)^2+(self.y-Y)^2) print("nebula radius = " .. self.r) end,
+			setLMBC = function(self,X,Y)  end,
+		}
+	end,
+	event = function(self,particle)
+		for i,v in ipairs(self.array) do
+			if bound_point_circle(particle.x,particle.y,v.x,v.y,v.r) then
+				-- recolor particle
+				particle.c = v.c
+			end
+		end
+	end,
+	update = function(self,dt)
+		local dostuff
+		for i,v in ipairs(self.array) do
+			dostuff = function(alpha,delta)
+				if v.func == 'add' then
+					return alpha + 100 * delta
+				else
+					return alpha - 100 * delta
+				end
+			end
+			if not v.alpha then
+				-- calculate the offset
+				v.alpha = 63 + ((127/#self.array) * (i-1))
+			else
+				v.alpha = dostuff(v.alpha,dt)
+				-- set transparency
+				if v.alpha > 191 then
+					v.alpha = 191
+					v.func = 'sub'
+				elseif v.alpha < 64 then
+					v.alpha = 64
+					v.func = 'add'
+				end
+			end
+		end
+	end,
+	draw = function(self)
+		for i,v in ipairs(self.array) do
+			saveColor()
+			love.graphics.setColor(v.c[1],v.c[2],v.c[3],v.alpha)
+			love.graphics.circle('line',v.x,v.y,v.r,v.r*5)
+			restoreColor()
+		end
+	end,
+	capture = function(self,X,Y)
+		for i,v in ipairs(self.array) do
+			--print "capture: Nebula"
+			if bound_point_circle(X,Y,v.x,v.y,v.r) then
+				return v
+			end
+		end
+		return false
+	end
+}
+
+
 -- Sink definition
 
 local Sink = {
@@ -111,8 +273,8 @@ local Sink = {
 			else
 				if vol > 0.0 then v.song:setVolume(math.max(vol - 0.1 * v.e * dt, 0.0)) end
 			end
-			print("particle count: " .. v.p)
-			print("volume of sink: " .. vol)
+			--print("particle count: " .. v.p)
+			--print("volume of sink: " .. vol)
 		end
 	end,
 	draw = function(self,dt)
@@ -159,18 +321,24 @@ local Particle = {
 			live = true,
 			sinked = false,
 			temp_r = 0,
+			limbotime = 0,
 		}
 	end,
 	update = function(self,dt)
 		for i,v in ipairs(self.array) do
 			if v.live then
 				-- apply relevant modifications
+				Blackhole:event(v)
+				Nebula:event(v)
 				if not v.sinked then v.sinked = Sink:event(v) end
 				-- compute movement
 				v.x = v.x + v.r * math.cos(v.phi) * (dt/(1/75))
 				v.y = v.y - v.r * math.sin(v.phi) * (dt/(1/75))
 				v.r = v.r + v.r * v.a * dt
-				if (v.r <= 0.1) then v.live = false end
+				if (v.r <= 0.1) then v.limbotime = v.limbotime + 1 else v.limbotime = math.max(v.limbotime - 1,0) end
+				if v.limbotime > (1/dt) * 2 then
+					v.live = false
+				end
 			end
 		end
 	end,
@@ -256,7 +424,7 @@ local Emitter = {
 			c = Color,
 			setLMB = function(self,X,Y) self.x = X self.y = Y print("emitter position = " .. self.x .. ", " .. self.y) end,
 			setLMBS = function(self,X,Y) self.phi = math.atan2(-(Y-self.y),X-self.x) print("emitter angle = " .. self.phi) end,
-			setLMBC = function(self,X,Y) self.d = 0.5-1/math.sqrt((self.x-X)^2+(self.y-Y)^2) print("emitter density = " .. self.d) end,
+			setLMBC = function(self,X,Y) self.s = 1/math.sqrt((self.x-X)^2+(self.y-Y)^2) print("emitter spread = " .. self.s) end,
 		}
 	end,
 	update = function(self,dt,counter)
@@ -294,8 +462,11 @@ local Emitter = {
 
 -- Object Capturing for mouse cursor
 
-function Capture(x,y)
-	return (Emitter:capture(x,y) or Sink:capture(x,y) or Redirector:capture(x,y))
+function Capture(x,y,debug)
+	return (
+		(debug and (Emitter:capture(x,y) or Sink:capture(x,y) or Nebula:capture(x,y) or Blackhole:capture(x,y))) or 
+		(Redirector:capture(x,y))
+	)
 end
 
 -- Main things
@@ -303,6 +474,8 @@ end
 local Canvas
 
 function love.load()
+
+	love.graphics.setBackgroundColor(16,16,16,0)
 
 	-- Create canvas
 	Canvas = love.graphics.newCanvas()
@@ -319,7 +492,13 @@ function love.load()
 	local width = love.graphics.getWidth()
 	local height = love.graphics.getHeight()
 
+	Blackhole:new(width/2,height/2,50)
+
+	Nebula:new(width/2,height/2,50,{255,0,255,255})
+	Nebula:new(width/3,height/2,50,{0,0,255,255})
+
 	Redirector:new(2*width/3,height/2,math.rad(120),25,0.01)
+	Redirector:new(6*width/7,height/2,math.rad(0),25,0.01)
 
 	Emitter:new(width/2,height/6,2*math.pi/2,1,-0.5,{127,127,255,255},1/32,1/16,1/5,'rand')
 	Emitter:new(width/2,height/4,2*math.pi/2,1,-0.5,{255,127,127,255},1/32,1/16,1/5,'rand')
@@ -343,7 +522,7 @@ function love.update(dt)
 	local mY = love.mouse.getY()
 
 	if love.mouse.isDown('l') and (mouse_x ~= mX or mouse_y ~= mY) then
-		if draggedObject == nil then draggedObject = Capture(mX,mY) end
+		if draggedObject == nil then draggedObject = Capture(mouse_x,mouse_y,true) end
 		mouse_x,mouse_y = nil,nil
 		if type(draggedObject) == 'table' then
 			if love.keyboard.isDown('lshift') or love.keyboard.isDown('rshift') then
@@ -358,6 +537,8 @@ function love.update(dt)
 
 	-- Element updates
 
+	Blackhole:update(dt)
+	Nebula:update(dt)
 	Redirector:update(dt)
 	Emitter:update(dt,counter)
 	Sink:update(dt)
@@ -373,14 +554,16 @@ function love.draw()
 
 	love.graphics.push()
 
-	Redirector:draw()
+	Blackhole:draw()
+	Nebula:draw()
 	Emitter:draw()
 	Sink:draw()
+	Redirector:draw()
 
 	love.graphics.setCanvas(Canvas)
 
 	saveColor()
-	love.graphics.setColor(0,0,0,3)
+	love.graphics.setColor(0,0,0,32)
 	love.graphics.rectangle('fill',0,0,love.graphics.getWidth(),love.graphics.getHeight())
 	restoreColor()
 
@@ -389,6 +572,8 @@ function love.draw()
 	love.graphics.setCanvas()
 
 	love.graphics.draw(Canvas)
+
+	love.graphics.print("particlecount: " .. #Particle.array,5,5)
 
 	love.graphics.pop()
 
